@@ -1,13 +1,43 @@
-import os, webbrowser, Pmw, logging, subprocess, pickle, shutil
+import os, webbrowser, Pmw, logging, subprocess, pickle, shutil, sys
 import pandas as pd
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, Color, colors
 import tkinter as tk
-# from tkinter import ttk
+from tkinter import ttk
 from tkinter.filedialog import askdirectory, askopenfilename
 import tkinter.messagebox as msg_box
 from xmldiff import main
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+import multiprocessing
+import threading
+# from multiprocessing import Queue
+from queue import Queue
+
+
+class ScrollableFrame(tk.Frame):
+
+    def __init__(self, container, bg=None, *args, **kwargs):
+        super().__init__(container, *args, **kwargs)
+        self.canvas = tk.Canvas(self, bg="black")
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = tk.Frame(self.canvas)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            # lambda e: self.change_view()
+        )
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    def change_view(self):
+        self.canvas.config(scrollregion=self.canvas.bbox("all"))
+        # self.canvas.yview_moveto(1)
+
+    def move_to_end(self):
+        self.canvas.yview_moveto(1)
 
 
 def create_results_excel():
@@ -50,7 +80,7 @@ def initialise():
         opt.set(1)
         xmls_count_var.set("Select a xml file")
     except Exception as e:
-        print(e)
+        logger.error(e)
 
 
 def set_xml_dir():
@@ -66,6 +96,7 @@ def set_reports_dir():
 
 
 def set_mode(root):
+    pass
     global excel_frame
     global xml_df
     file_var['old_xml'].set("")
@@ -74,6 +105,7 @@ def set_mode(root):
     xml_df = None
     xmls_count_var.set("Select a xml file")
     if opt.get() == 1:
+        update_logs("######################### Changing to Manual mode #########################")
         excel_frame.pack_forget()
         old_xml_entry.config(state='normal')
         new_xml_entry.config(state='normal')
@@ -84,6 +116,7 @@ def set_mode(root):
         prev_btn.grid_forget()
         cnt_label.grid_forget()
     else:
+        update_logs("######################### Changing to Excel mode  #########################")
         excel_frame.pack()
         old_xml_entry.config(state='disabled')
         new_xml_entry.config(state='disabled')
@@ -96,13 +129,14 @@ def set_mode(root):
 
 
 def get_data_from_excel():
-    print(file_var['excel'].get())
+    logger.debug(file_var['excel'].get())
     try:
         df = pd.read_excel(file_var['excel'].get())
+        logger.debug(df)
         print(df)
         return df
     except Exception as e:
-        print(e)
+        logger.error(e)
 
 
 def set_exl_file():
@@ -126,17 +160,6 @@ def set_exl_file():
 
 
 def get_xml_files(folder, file):
-    # xml_files = []
-    # cnt = 1
-    # while True:
-    #     xml_file = "{:0>8}-{:0>3}.00-FabModule.xml".format(file, cnt)
-    #     file_path = os.path.join(dir, xml_file)
-    #     if os.path.exists(file_path):
-    #         xml_files.append(xml_file)
-    #         cnt += 1
-    #     else:
-    #         break
-    # xml_files = [xml_file for xml_file in os.listdir(dir) if os.path.isfile(os.path.join(dir, xml_file)) and file in xml_file]
     file = "{:0>8}".format(file)
     xml_files = [xml_file for xml_file in os.listdir(folder) if
                  os.path.isfile(os.path.join(folder, xml_file)) and xml_file.startswith(file)]
@@ -151,8 +174,6 @@ def compare(dir, xml1, xml2):
         out_file = os.path.join(report_folder, xml1.split('.')[0] + '_' + xml2.split('.')[0] + '.html')
         winmerge = '"%s\WinMerge\WinMergeU.exe"' % os.environ['ProgramFiles']
         cmd_line = '%s /e /ul /ur "%s" "%s" -minimize -noninteractive -u -or "%s"' % (winmerge, file1, file2, out_file)
-        # cmd_line = '%s /e /ul /ur "%s" "%s"' % (winmerge, file1, file2)
-        # cmd_line = '%s /e /ul /ur "%s" "%s" -u -or "%s"' % (winmerge, file1, file2, out_file)
         sp = subprocess.Popen(cmd_line, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return "Not identical", out_file
     else:
@@ -161,16 +182,18 @@ def compare(dir, xml1, xml2):
 
 def create_res_frame(xml1, xml2, res, outfile):
     new_res_frame = tk.Frame(results_frame)
-    new_res_frame.pack()
     tk.Label(new_res_frame, text=xml1, bd=2, relief="solid", padx=10, pady=10).grid(row=0, column=0)
     tk.Label(new_res_frame, text=xml2, bd=2, relief="solid", padx=10, pady=10).grid(row=0, column=1)
     if res == "identical":
-        tk.Label(new_res_frame, text=res, bd=2, bg="green", padx=22, pady=10, relief="sunken").grid(row=0, column=2,
-                                                                                                    padx=10)
+        tk.Label(new_res_frame, text=res, bd=2, bg="green", padx=22, pady=10, relief="sunken")\
+            .grid(row=0, column=2,padx=10)
+    elif res == "Error":
+        tk.Label(new_res_frame, text=res, bd=2, bg="blue", padx=22, pady=10, relief="sunken") \
+            .grid(row=0, column=2, padx=10)
     else:
         tk.Button(new_res_frame, text=res, bg="red", padx=8, pady=8,
                   command=lambda: webbrowser.open(outfile, new=2)).grid(row=0, column=2, padx=10)
-        # tk.Label(new_res_frame, text=res, bd=2, bg="red", padx=10, pady=10, relief="raised").grid(row=0, column=2,padx=10)
+    new_res_frame.pack()
 
 
 def save_results(xml1, xml2, res):
@@ -182,6 +205,22 @@ def save_results(xml1, xml2, res):
     wb.save(results_xlsx)
     return
 
+def _compare(xml1, xml2, results):
+    start = datetime.now()
+    try:
+        res, outfile = compare(dir_var['xmls'].get(), xml1, xml2)
+        logger.info("{} & {} compared: {} in {}ms".format(xml1, xml2, res,
+                                                          (datetime.now() - start) / timedelta(milliseconds=1)))
+    except Exception as e:
+        res = "Error"
+        outfile = None
+        logger.error("Error is processing {} & {} {}".format(xml1, xml2, e))
+    finally:
+        create_res_frame(xml1, xml2, res, outfile)
+        # save_results(xml1, xml2, res)
+        results.append([xml1, xml2, res])
+        update_logs("{} & {} compared: {} in {}ms".format(xml1, xml2, res,
+                                                          (datetime.now() - start) / timedelta(milliseconds=1)))
 
 def cmd():
     clear_results_frame()
@@ -192,8 +231,7 @@ def cmd():
         return
     xml_files_1 = get_xml_files(dir_var['xmls'].get(), file1)
     xml_files_2 = get_xml_files(dir_var['xmls'].get(), file2)
-    print(xml_files_1)
-    print(xml_files_2)
+    logger.debug("old_xmls: {}\n new_xmls: {}".format(xml_files_1, xml_files_2))
     if not xml_files_1 and not xml_files_2:
         msg_box.showerror("XML files", "XML files starting with\n" + file1 + " not found\n" + file2 + " not found")
         return
@@ -207,13 +245,12 @@ def cmd():
         msg_box.showerror("XML files", "Sub files length mismatch")
         return
     else:
-        cnt = 0
+        update_logs("********** Starting to compare {} {} with line items:{}  **********".format(file1, file2, len(xml_files_1)))
+        results = []
         for xml1, xml2 in zip(xml_files_1, xml_files_2):
-            res, outfile = compare(dir_var['xmls'].get(), xml1, xml2)
-            # print(res)
-            create_res_frame(xml1, xml2, res, outfile)
-            save_results(xml1, xml2, res)
-            cnt += 1
+            thread = threading.Thread(target=_compare, args=(xml1, xml2, results, ))
+            thread.start()
+
 
 
 def on_closing():
@@ -242,12 +279,30 @@ def clear_results_frame():
         widget.destroy()
 
 
+def update_logs(data):
+    global logs
+    global log_var
+    logs.append(data)
+    if len(logs) > log_cap:
+        logs = logs[len(logs) - log_cap - 1:]
+    log_var.set("\n".join(logs))
+
+
 if __name__ == '__main__':
-    logger = logging.getLogger()
+    logger = logging.getLogger("application")
+    log_level = logging.INFO
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', "%Y-%m-%d %H:%M:%S")
+    handler = logging.StreamHandler(stream=sys.stdout)
+    handler.setFormatter(formatter)
+    handler.setLevel(log_level)
+
+    logger.addHandler(handler)
+    logger.setLevel(log_level)
 
     root = tk.Tk()
     root.title("XML Compare")
-    root.geometry("640x640")
+    # root.geometry("640x720")
+    root.geometry("{}x{}+0+0".format(root.winfo_screenwidth(), root.winfo_screenheight()))
 
     dir_var = {"xmls": tk.StringVar(),
                "reports": tk.StringVar()}
@@ -276,7 +331,7 @@ if __name__ == '__main__':
     tk.Label(dir_frame, text="Report folder: ").grid(row=1, column=1, padx=5)
     tk.Label(dir_frame, textvariable=dir_var['reports'], fg="blue").grid(row=1, column=2)
 
-    # Radio buttons to change b/w manual and excel
+    # # Radio buttons to change b/w manual and excel
     tk.Radiobutton(dir_frame, text="Manual", variable=opt, value=1, command=lambda: set_mode(root))\
         .grid(row=2, column=0, columnspan=2)
     tk.Radiobutton(dir_frame, text="Excel", variable=opt, value=2, command=lambda: set_mode(root))\
@@ -325,15 +380,15 @@ if __name__ == '__main__':
     sf.pack(padx=10, pady=10, ipadx=60, fill='y', expand=1)
     results_frame = sf.interior()
 
-    status = tk.Frame(root, bd=1, relief=tk.SUNKEN)
-    status.pack(side=tk.BOTTOM, fill=tk.X)
+    sf_logging_frame = ScrollableFrame(root, bg="black")
+    sf_logging_frame.pack(fill="both", padx=10, pady=10)
+    logging_frame = sf_logging_frame.scrollable_frame
 
-    # progressbar = ttk.Progressbar(status, orient=tk.HORIZONTAL, length=200, mode="determinate")
-    # progressbar.grid(row=0, column=0)
-    # # progressbar.start()
-    # progress = tk.DoubleVar()
-    # progress.set(0)
-    # progressbar.config(variable=progress)
+    log_var = tk.StringVar()
+    logs = []
+    log_cap = 400
+    tk.Label(logging_frame, textvariable=log_var, bg="black", fg="white", anchor="w").pack(ipadx=640, expand=True)
+
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
