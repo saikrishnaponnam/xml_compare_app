@@ -275,7 +275,7 @@ def compare(dir, xml1, xml2):
 
 
 def _compare(xml1, xml2, results, frame):
-    logger.warning("Current Threads: {}".format(threading.active_count()))
+    # logger.warning("Current Threads: {}".format(threading.active_count()))
     start = datetime.now()
     try:
         xmls_dir = dir_var['xmls'].get()
